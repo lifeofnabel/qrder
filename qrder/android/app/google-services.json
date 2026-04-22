@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "648969960683",
+    "project_id": "qrder-7e07b",
+    "storage_bucket": "qrder-7e07b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:648969960683:android:78b71594cb2660a6ad92ae",
+        "android_client_info": {
+          "package_name": "com.example.qrder"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB87nCxELawRibB4ho0CmXQz0yT5wU-Kwo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
