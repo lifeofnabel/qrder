@@ -1,4 +1,7 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+
 import 'editArticlePage.dart';
 
 class MyArticlesPage extends StatefulWidget {
@@ -9,230 +12,665 @@ class MyArticlesPage extends StatefulWidget {
 }
 
 class _MyArticlesPageState extends State<MyArticlesPage> {
-  String _selectedCategory = 'Wraps';
+  static const Color _bg = Color(0xFFF8F6F1);
+  static const Color _card = Color(0xFFFFFEFB);
+  static const Color _ink = Color(0xFF1A1A1A);
+  static const Color _muted = Color(0xFF777777);
+  static const Color _soft = Color(0xFFEEEBE4);
+  static const Color _line = Color(0xFFE7E2D9);
+  static const Color _green = Color(0xFF2F5E1C);
+  static const Color _red = Color(0xFFD83A34);
+  static const Color _gold = Color(0xFFD8A75D);
 
-  final Map<String, List<Map<String, dynamic>>> _articlesByCategory = {
-    'Wraps': [
-      {
-        'id': 'A-101',
-        'name': 'Shawarma Wrap',
-        'price': '8,50 €',
-      },
-      {
-        'id': 'A-102',
-        'name': 'Falafel Wrap',
-        'price': '7,50 €',
-      },
-    ],
-    'Bowls': [
-      {
-        'id': 'B-201',
-        'name': 'Couscous Bowl',
-        'price': '9,50 €',
-      },
-      {
-        'id': 'B-202',
-        'name': 'Mozzarella Bowl',
-        'price': '9,00 €',
-      },
-    ],
-    'Getränke': [
-      {
-        'id': 'C-301',
-        'name': 'Cola',
-        'price': '2,50 €',
-      },
-      {
-        'id': 'C-302',
-        'name': 'Ayran',
-        'price': '2,00 €',
-      },
-    ],
-  };
+  String? _selectedCategoryId;
 
-  List<Map<String, dynamic>> get _currentArticles =>
-      _articlesByCategory[_selectedCategory] ?? [];
+  String? get _merchantId => FirebaseAuth.instance.currentUser?.uid;
 
-  void _addArticle() {
-    setState(() {
-      _currentArticles.add({
-        'id': 'NEW-${_currentArticles.length + 1}',
-        'name': 'Neuer Artikel',
-        'price': '0,00 €',
-      });
-    });
+  CollectionReference<Map<String, dynamic>>? get _categoriesRef {
+    final merchantId = _merchantId;
+    if (merchantId == null) return null;
+
+    return FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(merchantId)
+        .collection('itemCategories');
   }
 
-  void _editArticle(int index) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${_currentArticles[index]['name']} bearbeiten kommt später.'),
+  CollectionReference<Map<String, dynamic>>? get _itemsRef {
+    final merchantId = _merchantId;
+    if (merchantId == null) return null;
+
+    return FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(merchantId)
+        .collection('items');
+  }
+
+  String _formatPrice(dynamic value) {
+    if (value == null) return '0,00 €';
+
+    final number = value is num
+        ? value.toDouble()
+        : double.tryParse(value.toString().replaceAll(',', '.')) ?? 0;
+
+    return '${number.toStringAsFixed(2).replaceAll('.', ',')} €';
+  }
+
+  void _openEditArticle({
+    required ArticleData article,
+    required String categoryName,
+  }) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditArticlePage(
+          articleId: article.docId,
+          initialName: article.name,
+          initialPrice: _formatPrice(article.price),
+          initialCategory: categoryName,
+        ),
       ),
     );
   }
 
-  void _deleteArticle(int index) {
-    final articleName = _currentArticles[index]['name'];
+  void _addArticle(CategoryData category) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditArticlePage(
+          articleId: '',
+          initialName: '',
+          initialPrice: '',
+          initialCategory: category.name,
+        ),
+      ),
+    );
+  }
 
-    setState(() {
-      _currentArticles.removeAt(index);
+  Future<void> _deactivateArticle(ArticleData article) async {
+    final ref = _itemsRef;
+    if (ref == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Artikel ausblenden?'),
+          content: Text(
+            '"${article.name}" wird nicht gelöscht, sondern nur deaktiviert.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Abbrechen'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Ausblenden'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirm != true) return;
+
+    await ref.doc(article.docId).update({
+      'isActive': false,
+      'updatedAt': FieldValue.serverTimestamp(),
     });
 
+    if (!mounted) return;
+
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$articleName gelöscht.'),
-      ),
+      const SnackBar(content: Text('Artikel ausgeblendet.')),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final categoriesRef = _categoriesRef;
+    final itemsRef = _itemsRef;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F6F1),
+      backgroundColor: _bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF8F6F1),
+        backgroundColor: _bg,
         elevation: 0,
         scrolledUnderElevation: 0,
         title: const Text(
-          'My Articles',
+          'Artikel',
           style: TextStyle(
-            color: Color(0xFF1A1A1A),
+            color: _ink,
             fontSize: 22,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w900,
           ),
         ),
-        iconTheme: const IconThemeData(color: Color(0xFF1A1A1A)),
+        iconTheme: const IconThemeData(color: _ink),
       ),
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Hier verwaltest du die Artikel innerhalb einer Kategorie.',
-                style: TextStyle(
-                  color: Color(0xFF777777),
-                  fontSize: 15,
-                  height: 1.6,
+        child: categoriesRef == null || itemsRef == null
+            ? const Center(child: Text('Kein Händler gefunden.'))
+            : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: categoriesRef.orderBy('sortOrder').snapshots(),
+          builder: (context, categorySnapshot) {
+            if (categorySnapshot.hasError) {
+              return const Center(
+                child: Text('Kategorien konnten nicht geladen werden.'),
+              );
+            }
+
+            if (!categorySnapshot.hasData) {
+              return const Center(
+                child: CircularProgressIndicator(color: _ink),
+              );
+            }
+
+            final categories = categorySnapshot.data!.docs
+                .map((doc) => CategoryData.fromDoc(doc))
+                .where((category) => category.isActive)
+                .toList();
+
+            if (categories.isEmpty) {
+              return _EmptyState(
+                icon: Icons.category_outlined,
+                title: 'Keine Kategorien',
+                text: 'Erstelle zuerst Kategorien wie Wraps, Bowls oder Getränke.',
+                buttonText: null,
+                onTap: null,
+              );
+            }
+
+            final selectedExists = categories.any(
+                  (category) => category.id == _selectedCategoryId,
+            );
+
+            if (_selectedCategoryId == null || !selectedExists) {
+              _selectedCategoryId = categories.first.id;
+            }
+
+            final selectedCategory = categories.firstWhere(
+                  (category) => category.id == _selectedCategoryId,
+              orElse: () => categories.first,
+            );
+
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: itemsRef
+                  .where('categoryId', isEqualTo: selectedCategory.id)
+                  .snapshots(),
+              builder: (context, itemSnapshot) {
+                if (itemSnapshot.hasError) {
+                  return const Center(
+                    child: Text('Artikel konnten nicht geladen werden.'),
+                  );
+                }
+
+                if (!itemSnapshot.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: _ink),
+                  );
+                }
+
+                final articles = itemSnapshot.data!.docs
+                    .map((doc) => ArticleData.fromDoc(doc))
+                    .where((article) => article.isActive)
+                    .toList()
+                  ..sort((a, b) {
+                    final aNumber = int.tryParse(a.articleNumber) ?? 999999;
+                    final bNumber = int.tryParse(b.articleNumber) ?? 999999;
+
+                    if (aNumber != bNumber) {
+                      return aNumber.compareTo(bNumber);
+                    }
+
+                    return a.name.compareTo(b.name);
+                  });
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _TopCard(
+                        articleCount: articles.length,
+                        categoryCount: categories.length,
+                      ),
+                      const SizedBox(height: 14),
+                      _CategorySelector(
+                        categories: categories,
+                        selectedCategoryId: selectedCategory.id,
+                        onChanged: (id) {
+                          if (id == null) return;
+                          setState(() => _selectedCategoryId = id);
+                        },
+                      ),
+                      const SizedBox(height: 14),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _addArticle(selectedCategory),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _green,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text(
+                            'Artikel hinzufügen',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      if (articles.isEmpty)
+                        _EmptyState(
+                          icon: Icons.inventory_2_outlined,
+                          title: 'Keine Artikel',
+                          text: 'In dieser Kategorie gibt es noch keine Artikel.',
+                          buttonText: 'Ersten Artikel erstellen',
+                          onTap: () => _addArticle(selectedCategory),
+                        )
+                      else
+                        ListView.separated(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          itemCount: articles.length,
+                          separatorBuilder: (_, __) =>
+                          const SizedBox(height: 12),
+                          itemBuilder: (context, index) {
+                            final article = articles[index];
+
+                            return _ArticleCard(
+                              article: article,
+                              priceText: _formatPrice(article.price),
+                              originalPriceText:
+                              article.originalPrice == null
+                                  ? null
+                                  : _formatPrice(article.originalPrice),
+                              onEdit: () => _openEditArticle(
+                                article: article,
+                                categoryName: selectedCategory.name,
+                              ),
+                              onDelete: () => _deactivateArticle(article),
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class CategoryData {
+  final String id;
+  final String name;
+  final bool isActive;
+
+  const CategoryData({
+    required this.id,
+    required this.name,
+    required this.isActive,
+  });
+
+  factory CategoryData.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+
+    return CategoryData(
+      id: data['id']?.toString() ?? doc.id,
+      name: data['name']?.toString() ?? 'Ohne Name',
+      isActive: data['isActive'] as bool? ?? true,
+    );
+  }
+}
+
+class ArticleData {
+  final String docId;
+  final String id;
+  final String articleNumber;
+  final String name;
+  final String description;
+  final String imageUrl;
+  final dynamic price;
+  final dynamic originalPrice;
+  final bool isActive;
+  final bool isAvailable;
+  final int optionGroupCount;
+
+  const ArticleData({
+    required this.docId,
+    required this.id,
+    required this.articleNumber,
+    required this.name,
+    required this.description,
+    required this.imageUrl,
+    required this.price,
+    required this.originalPrice,
+    required this.isActive,
+    required this.isAvailable,
+    required this.optionGroupCount,
+  });
+
+  factory ArticleData.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+
+    final rawGroups = data['optionGroups'] ?? data['selectionGroups'];
+    final groupCount = rawGroups is List ? rawGroups.length : 0;
+
+    return ArticleData(
+      docId: doc.id,
+      id: data['id']?.toString() ?? doc.id,
+      articleNumber: data['articleNumber']?.toString() ?? '',
+      name: data['name']?.toString() ??
+          data['title']?.toString() ??
+          'Ohne Name',
+      description: data['description']?.toString() ?? '',
+      imageUrl: data['imageUrl']?.toString() ?? '',
+      price: data['price'],
+      originalPrice: data['originalPrice'],
+      isActive: data['isActive'] as bool? ?? true,
+      isAvailable: data['isAvailable'] as bool? ?? true,
+      optionGroupCount: groupCount,
+    );
+  }
+}
+
+class _TopCard extends StatelessWidget {
+  final int articleCount;
+  final int categoryCount;
+
+  const _TopCard({
+    required this.articleCount,
+    required this.categoryCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Color(0xFFFFFEFB),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: Color(0xFFE7E2D9)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 46,
+            height: 46,
+            decoration: BoxDecoration(
+              color: Color(0xFFEEEBE4),
+              borderRadius: BorderRadius.circular(15),
+            ),
+            child: Icon(
+              Icons.inventory_2_outlined,
+              color: Color(0xFF1A1A1A),
+            ),
+          ),
+          SizedBox(width: 13),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$articleCount Artikel',
+                  style: TextStyle(
+                    color: Color(0xFF1A1A1A),
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                SizedBox(height: 4),
+                Text(
+                  '$categoryCount Kategorien · Optionen möglich',
+                  style: TextStyle(
+                    color: Color(0xFF777777),
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategorySelector extends StatelessWidget {
+  final List<CategoryData> categories;
+  final String selectedCategoryId;
+  final ValueChanged<String?> onChanged;
+
+  const _CategorySelector({
+    required this.categories,
+    required this.selectedCategoryId,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final safeValue = categories.any((category) => category.id == selectedCategoryId)
+        ? selectedCategoryId
+        : categories.first.id;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3F0E9),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFE0DBD2)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: safeValue,
+          isExpanded: true,
+          dropdownColor: const Color(0xFFFFFEFB),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded),
+          items: categories.map((category) {
+            return DropdownMenuItem<String>(
+              value: category.id,
+              child: Text(
+                category.name,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Color(0xFF1A1A1A),
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 24),
+            );
+          }).toList(),
+          onChanged: onChanged,
+        ),
+      ),
+    );
+  }
+}
+
+class _ArticleCard extends StatelessWidget {
+  final ArticleData article;
+  final String priceText;
+  final String? originalPriceText;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  const _ArticleCard({
+    required this.article,
+    required this.priceText,
+    required this.originalPriceText,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasImage = article.imageUrl.trim().isNotEmpty;
+
+    return Material(
+      color: const Color(0xFFFFFEFB),
+      borderRadius: BorderRadius.circular(22),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(22),
+        onTap: onEdit,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: const Color(0xFFE7E2D9)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x06000000),
+                blurRadius: 12,
+                offset: Offset(0, 5),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
               Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                width: 76,
+                height: 76,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFDFCF9),
-                  borderRadius: BorderRadius.circular(26),
-                  border: Border.all(
-                    color: const Color(0xFFE7E2D9),
-                    width: 1,
-                  ),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x08000000),
-                      blurRadius: 18,
-                      offset: Offset(0, 8),
+                  color: const Color(0xFFEEEBE4),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: hasImage
+                          ? Image.network(
+                        article.imageUrl,
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) =>
+                        const Icon(Icons.image_outlined),
+                      )
+                          : const Icon(
+                        Icons.image_outlined,
+                        color: Color(0xFF777777),
+                        size: 30,
+                      ),
                     ),
+                    if (article.articleNumber.isNotEmpty)
+                      Positioned(
+                        left: 7,
+                        bottom: 7,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 7,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1A1A1A),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            article.articleNumber,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                        ),
+                      ),
                   ],
                 ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Kategorie wählen',
-                      style: TextStyle(
+                    Text(
+                      article.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
                         color: Color(0xFF1A1A1A),
-                        fontSize: 14,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      article.description.isEmpty
+                          ? 'Keine Beschreibung'
+                          : article.description,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF777777),
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF3F0E9),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: const Color(0xFFE0DBD2),
-                          width: 1,
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 7,
+                      runSpacing: 6,
+                      children: [
+                        _MiniChip(
+                          text: priceText,
+                          dark: true,
                         ),
-                      ),
-                      child: DropdownButtonHideUnderline(
-                        child: DropdownButton<String>(
-                          value: _selectedCategory,
-                          isExpanded: true,
-                          dropdownColor: const Color(0xFFFDFCF9),
-                          icon: const Icon(Icons.keyboard_arrow_down_rounded),
-                          items: _articlesByCategory.keys.map((category) {
-                            return DropdownMenuItem(
-                              value: category,
-                              child: Text(category),
-                            );
-                          }).toList(),
-                          onChanged: (value) {
-                            if (value == null) return;
-                            setState(() {
-                              _selectedCategory = value;
-                            });
-                          },
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 54,
-                      child: ElevatedButton.icon(
-                        onPressed: _addArticle,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2F5E1C),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
+                        if (originalPriceText != null &&
+                            originalPriceText != '0,00 €')
+                          _MiniChip(
+                            text: 'alt $originalPriceText',
+                            gold: true,
                           ),
+                        _MiniChip(
+                          text: article.isAvailable ? 'verfügbar' : 'aus',
+                          red: !article.isAvailable,
                         ),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text(
-                          'Neuen Artikel hinzufügen',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w600,
+                        if (article.optionGroupCount > 0)
+                          _MiniChip(
+                            text: '${article.optionGroupCount} Optionen',
                           ),
-                        ),
-                      ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-              ...List.generate(_currentArticles.length, (index) {
-                final article = _currentArticles[index];
-
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: _ArticleCard(
-                    articleId: article['id'],
-                    articleName: article['name'],
-                    price: article['price'],
-                    onEdit: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => EditArticlePage(
-                            articleId: article['id'],
-                            initialName: article['name'],
-                            initialPrice: article['price'],
-                            initialCategory: _selectedCategory,
-                          ),
-                        ),
-                      );
-                    },
-                    onDelete: () => _deleteArticle(index),
+              const SizedBox(width: 8),
+              Column(
+                children: [
+                  IconButton(
+                    onPressed: onEdit,
+                    icon: const Icon(
+                      Icons.edit_rounded,
+                      color: Color(0xFF777777),
+                    ),
                   ),
-                );
-              }),
+                  IconButton(
+                    onPressed: onDelete,
+                    icon: const Icon(
+                      Icons.visibility_off_rounded,
+                      color: Color(0xFFD83A34),
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -241,141 +679,120 @@ class _MyArticlesPageState extends State<MyArticlesPage> {
   }
 }
 
-class _ArticleCard extends StatelessWidget {
-  final String articleId;
-  final String articleName;
-  final String price;
-  final VoidCallback onEdit;
-  final VoidCallback onDelete;
+class _MiniChip extends StatelessWidget {
+  final String text;
+  final bool dark;
+  final bool red;
+  final bool gold;
 
-  const _ArticleCard({
-    required this.articleId,
-    required this.articleName,
-    required this.price,
-    required this.onEdit,
-    required this.onDelete,
+  const _MiniChip({
+    required this.text,
+    this.dark = false,
+    this.red = false,
+    this.gold = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Color bg = const Color(0xFFEEEBE4);
+    Color fg = const Color(0xFF1A1A1A);
+
+    if (dark) {
+      bg = const Color(0xFF1A1A1A);
+      fg = Colors.white;
+    }
+
+    if (red) {
+      bg = const Color(0xFFF8E2E0);
+      fg = const Color(0xFFD83A34);
+    }
+
+    if (gold) {
+      bg = const Color(0xFFFFF4D8);
+      fg = const Color(0xFF8A5A00);
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: fg,
+          fontSize: 10.8,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String text;
+  final String? buttonText;
+  final VoidCallback? onTap;
+
+  const _EmptyState({
+    required this.icon,
+    required this.title,
+    required this.text,
+    required this.buttonText,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      width: double.infinity,
+      padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
-        color: const Color(0xFFFDFCF9),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(
-          color: const Color(0xFFE7E2D9),
-          width: 1,
-        ),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x06000000),
-            blurRadius: 12,
-            offset: Offset(0, 5),
-          ),
-        ],
+        color: const Color(0xFFFFFEFB),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFE7E2D9)),
       ),
-      child: Row(
+      child: Column(
         children: [
-          Container(
-            width: 74,
-            height: 74,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEEEBE4),
-              borderRadius: BorderRadius.circular(18),
-            ),
-            child: Stack(
-              children: [
-                const Center(
-                  child: Icon(
-                    Icons.image_outlined,
-                    color: Color(0xFF7A7A7A),
-                    size: 30,
-                  ),
-                ),
-                Positioned(
-                  left: 8,
-                  bottom: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      articleId,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+          Icon(icon, color: const Color(0xFF777777), size: 42),
+          const SizedBox(height: 12),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFF1A1A1A),
+              fontSize: 20,
+              fontWeight: FontWeight.w900,
             ),
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  articleName,
-                  style: const TextStyle(
-                    color: Color(0xFF1A1A1A),
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  price,
-                  style: const TextStyle(
-                    color: Color(0xFF777777),
-                    fontSize: 14,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: onEdit,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF1A1A1A),
-                          side: const BorderSide(color: Color(0xFFDDDDDD)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Bearbeiten'),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: onDelete,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFFD83A34),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text('Löschen'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+          const SizedBox(height: 7),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFF777777),
+              fontSize: 14,
+              height: 1.4,
             ),
           ),
+          if (buttonText != null && onTap != null) ...[
+            const SizedBox(height: 18),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                onPressed: onTap,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Color(0xFF1A1A1A),
+                  foregroundColor: Colors.white,
+                ),
+                icon: const Icon(Icons.add_rounded),
+                label: Text(buttonText!),
+              ),
+            ),
+          ],
         ],
       ),
     );

@@ -1,26 +1,36 @@
 {
   "project_info": {
-    "project_number": "648969960683",
-    "project_id": "qrder-7e07b",
-    "storage_bucket": "qrder-7e07b.firebasestorage.app"
+    "project_number": "215765826491",
+    "project_id": "qoucher-26655",
+    "storage_bucket": "qoucher-26655.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:648969960683:android:78b71594cb2660a6ad92ae",
+        "mobilesdk_app_id": "1:215765826491:android:5a5a97c9d375d843bba29e",
         "android_client_info": {
           "package_name": "com.example.qrder"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "215765826491-97q54ac00p9dsso3vi7av9aoieie9obj.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
-          "current_key": "AIzaSyB87nCxELawRibB4ho0CmXQz0yT5wU-Kwo"
+          "current_key": "AIzaSyCXlsjtwiSe-_i5rcbIgcQIVUscDXl-xAk"
         }
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "215765826491-97q54ac00p9dsso3vi7av9aoieie9obj.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

@@ -1,6 +1,11 @@
-import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+
+import 'cloudinary_service.dart';
 
 class EditArticlePage extends StatefulWidget {
   final String articleId;
@@ -21,133 +26,289 @@ class EditArticlePage extends StatefulWidget {
 }
 
 class _EditArticlePageState extends State<EditArticlePage> {
+  static const Color _bg = Color(0xFFF8F6F1);
+  static const Color _card = Color(0xFFFFFEFB);
+  static const Color _ink = Color(0xFF1A1A1A);
+  static const Color _muted = Color(0xFF777777);
+  static const Color _soft = Color(0xFFEEEBE4);
+  static const Color _line = Color(0xFFE7E2D9);
+  static const Color _green = Color(0xFF2F5E1C);
+  static const Color _red = Color(0xFFD83A34);
+  static const Color _gold = Color(0xFFD8A75D);
+
   final ImagePicker _picker = ImagePicker();
-  File? _selectedImage;
 
-  late TextEditingController _titleController;
-  late TextEditingController _priceController;
-  late TextEditingController _articleNumberController;
-  late TextEditingController _descriptionController;
+  final TextEditingController _titleController = TextEditingController();
+  final TextEditingController _priceController = TextEditingController();
+  final TextEditingController _originalPriceController =
+  TextEditingController();
+  final TextEditingController _articleNumberController =
+  TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
 
-  late String _selectedCategory;
+  bool _isLoading = true;
+  bool _isSaving = false;
 
-  final List<String> _categories = [
-    'Wraps',
-    'Bowls',
-    'Getränke',
-    'Menüs',
-  ];
+  String? _selectedCategoryId;
+  String? _selectedCategoryName;
 
-  final List<String> _availableTags = [
-    'Spicy',
-    'Vegan',
-    'Vegetarisch',
-    'Bestseller',
-    'Fisch',
-    'Schwein',
-    'Hähnchen',
-    'Halal',
-    'Beef',
-  ];
+  String _imageUrl = '';
+  XFile? _pickedImage;
+  Uint8List? _pickedImageBytes;
+
+  int? _existingSortOrder;
+
+  List<CategoryData> _categories = [];
+  List<ItemOptionSource> _existingItems = [];
+  List<String> _foodTags = [];
 
   final Set<String> _selectedTags = {};
+  final List<OptionGroupData> _optionGroups = [];
 
-  final List<String> _allArticles = [
-    'Hähnchenwrap',
-    'Falafel Wrap',
-    'Halloumi Wrap',
-    'Pommes',
-    'Süßkartoffel',
-    'Cola',
-    'Ayran',
-    'Wasser',
-    'Knoblauchsoße',
-    'Scharfe Soße',
-  ];
+  bool get _isNew => widget.articleId.trim().isEmpty;
 
-  final List<_SelectionGroup> _selectionGroups = [
-    _SelectionGroup(
-      titleController: TextEditingController(text: 'Soße'),
-      isEnabled: true,
-      options: [
-        _SelectionOption(
-          nameController: TextEditingController(text: 'Knoblauchsoße'),
-          priceController: TextEditingController(text: '0'),
-        ),
-        _SelectionOption(
-          nameController: TextEditingController(text: 'Scharfe Soße'),
-          priceController: TextEditingController(text: '0'),
-        ),
-      ],
-    ),
-    _SelectionGroup(
-      titleController: TextEditingController(text: 'Side'),
-      isEnabled: true,
-      options: [
-        _SelectionOption(
-          nameController: TextEditingController(text: 'Pommes'),
-          priceController: TextEditingController(text: '1'),
-        ),
-        _SelectionOption(
-          nameController: TextEditingController(text: 'Süßkartoffel'),
-          priceController: TextEditingController(text: '2'),
-        ),
-      ],
-    ),
-    _SelectionGroup(
-      titleController: TextEditingController(text: 'Getränk Upgrade'),
-      isEnabled: false,
-      options: [
-        _SelectionOption(
-          nameController: TextEditingController(text: 'Cola'),
-          priceController: TextEditingController(text: '2'),
-        ),
-      ],
-    ),
-  ];
+  String? get _merchantId => FirebaseAuth.instance.currentUser?.uid;
 
-  bool _hasLinkedArticles = true;
-  int _linkedArticleCount = 2;
-  List<String?> _linkedArticleSelections = ['Hähnchenwrap', 'Pommes'];
+  CollectionReference<Map<String, dynamic>> get _itemsRef {
+    return FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(_merchantId)
+        .collection('items');
+  }
+
+  CollectionReference<Map<String, dynamic>> get _categoriesRef {
+    return FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(_merchantId)
+        .collection('itemCategories');
+  }
 
   @override
   void initState() {
     super.initState();
-    _titleController = TextEditingController(text: widget.initialName);
-    _priceController = TextEditingController(text: widget.initialPrice);
-    _articleNumberController = TextEditingController(text: widget.articleId);
-    _descriptionController = TextEditingController(
-      text:
-      'Leckerer Artikel mit anpassbaren Optionen. Perfekt für individuelle Bestellungen.',
-    );
-    _selectedCategory = widget.initialCategory;
-    _selectedTags.addAll(['Hähnchen', 'Halal']);
+    _boot();
   }
 
   @override
   void dispose() {
     _titleController.dispose();
     _priceController.dispose();
+    _originalPriceController.dispose();
     _articleNumberController.dispose();
     _descriptionController.dispose();
 
-    for (final group in _selectionGroups) {
-      group.titleController.dispose();
-      for (final option in group.options) {
-        option.nameController.dispose();
-        option.priceController.dispose();
-      }
+    for (final group in _optionGroups) {
+      group.dispose();
     }
 
     super.dispose();
   }
 
+  Future<void> _boot() async {
+    try {
+      await _loadCategories();
+      await _loadFoodTags();
+      await _loadExistingItems();
+
+      if (_isNew) {
+        await _prepareNewArticle();
+      } else {
+        await _loadArticle();
+      }
+    } catch (e) {
+      _showSnack('Laden fehlgeschlagen: $e');
+    }
+
+    if (!mounted) return;
+    setState(() => _isLoading = false);
+  }
+
+  Future<void> _loadCategories() async {
+    final snap = await _categoriesRef.orderBy('sortOrder').get();
+
+    _categories = snap.docs
+        .map((doc) => CategoryData.fromDoc(doc))
+        .where((category) => category.isActive)
+        .toList();
+
+    if (_categories.isEmpty) {
+      throw Exception('Keine Kategorien gefunden.');
+    }
+  }
+
+  Future<void> _loadFoodTags() async {
+    final doc = await FirebaseFirestore.instance
+        .collection('chooser')
+        .doc('foodTags')
+        .get();
+
+    final raw = doc.data()?['name'];
+
+    if (raw is List) {
+      _foodTags = raw
+          .map((e) => e.toString().trim())
+          .where((e) => e.isNotEmpty)
+          .toSet()
+          .toList();
+
+      _foodTags.sort();
+    }
+  }
+
+  Future<void> _loadExistingItems() async {
+    final snap = await _itemsRef.get();
+
+    _existingItems = snap.docs
+        .map((doc) => ItemOptionSource.fromDoc(doc))
+        .where((item) => item.isActive)
+        .toList();
+
+    _existingItems.sort((a, b) {
+      final aNumber = int.tryParse(a.articleNumber) ?? 999999;
+      final bNumber = int.tryParse(b.articleNumber) ?? 999999;
+      return aNumber.compareTo(bNumber);
+    });
+  }
+
+  Future<void> _prepareNewArticle() async {
+    final category = _categories.firstWhere(
+          (cat) => cat.name == widget.initialCategory,
+      orElse: () => _categories.first,
+    );
+
+    _selectedCategoryId = category.id;
+    _selectedCategoryName = category.name;
+
+    _titleController.text = widget.initialName.trim();
+    _priceController.text = _cleanPrice(widget.initialPrice);
+    _originalPriceController.text = '';
+    _descriptionController.text = '';
+    _articleNumberController.text = await _nextArticleNumber();
+
+    _optionGroups.clear();
+  }
+
+  Future<void> _loadArticle() async {
+    final doc = await _itemsRef.doc(widget.articleId).get();
+
+    if (!doc.exists || doc.data() == null) {
+      await _prepareNewArticle();
+      return;
+    }
+
+    final data = doc.data()!;
+
+    _titleController.text =
+        data['title']?.toString() ?? data['name']?.toString() ?? '';
+    _priceController.text = _valueToInput(data['price']);
+    _originalPriceController.text = _valueToInput(data['originalPrice']);
+    _articleNumberController.text = data['articleNumber']?.toString() ?? '';
+    _descriptionController.text = data['description']?.toString() ?? '';
+    _imageUrl = data['imageUrl']?.toString() ?? '';
+
+    _existingSortOrder = data['sortOrder'] is int ? data['sortOrder'] as int : null;
+
+    _selectedCategoryId = data['categoryId']?.toString();
+    _selectedCategoryName = data['categoryName']?.toString();
+
+    if (_selectedCategoryId == null ||
+        !_categories.any((cat) => cat.id == _selectedCategoryId)) {
+      final fallback = _categories.first;
+      _selectedCategoryId = fallback.id;
+      _selectedCategoryName = fallback.name;
+    }
+
+    final rawTags = data['tags'];
+    if (rawTags is List) {
+      _selectedTags.clear();
+      _selectedTags.addAll(rawTags.map((e) => e.toString()));
+    }
+
+    final rawGroups = data['optionGroups'] ?? data['selectionGroups'];
+
+    if (rawGroups is List) {
+      _optionGroups.clear();
+
+      for (final raw in rawGroups) {
+        if (raw is Map) {
+          _optionGroups.add(
+            OptionGroupData.fromMap(Map<String, dynamic>.from(raw)),
+          );
+        }
+      }
+    }
+  }
+
+  Future<String> _nextArticleNumber() async {
+    final snap = await _itemsRef.get();
+
+    final used = <int>{};
+
+    for (final doc in snap.docs) {
+      final number = int.tryParse(doc.data()['articleNumber']?.toString() ?? '');
+      if (number != null && number > 0) {
+        used.add(number);
+      }
+    }
+
+    var next = 1;
+    while (used.contains(next)) {
+      next++;
+    }
+
+    return next.toString();
+  }
+
+  String _cleanPrice(String value) {
+    return value.replaceAll('€', '').replaceAll(',', '.').trim();
+  }
+
+  String _valueToInput(dynamic value) {
+    if (value == null) return '';
+    if (value is num) return value.toString();
+    return value.toString().replaceAll('€', '').replaceAll(',', '.').trim();
+  }
+
+  num _parsePrice(String value) {
+    final clean = value.replaceAll('€', '').replaceAll(',', '.').trim();
+    return num.tryParse(clean) ?? 0;
+  }
+
+  String _normalizeSearch(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll('ä', 'ae')
+        .replaceAll('ö', 'oe')
+        .replaceAll('ü', 'ue')
+        .replaceAll('ß', 'ss')
+        .replaceAll(RegExp(r'[^a-z0-9]+'), ' ')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
+  void _showSnack(String text) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(text)));
+  }
+
   Future<void> _pickImage() async {
-    final XFile? picked = await _picker.pickImage(source: ImageSource.gallery);
+    final picked = await _picker.pickImage(
+      source: ImageSource.gallery,
+      imageQuality: 85,
+      maxWidth: 1600,
+    );
+
     if (picked == null) return;
 
+    final bytes = await picked.readAsBytes();
+
     setState(() {
-      _selectedImage = File(picked.path);
+      _pickedImage = picked;
+      _pickedImageBytes = bytes;
     });
   }
 
@@ -161,593 +322,267 @@ class _EditArticlePageState extends State<EditArticlePage> {
     });
   }
 
-  void _addSelectionGroup() {
+  void _addOptionGroup() {
     setState(() {
-      _selectionGroups.add(
-        _SelectionGroup(
-          titleController: TextEditingController(
-            text: 'Neue Auswahlgruppe',
-          ),
-          isEnabled: true,
-          options: [
-            _SelectionOption(
-              nameController: TextEditingController(text: 'Option 1'),
-              priceController: TextEditingController(text: '0'),
-            ),
-          ],
-        ),
-      );
+      _optionGroups.add(OptionGroupData.empty());
     });
   }
 
-  void _removeSelectionGroup(int index) {
-    final group = _selectionGroups[index];
-    group.titleController.dispose();
-    for (final option in group.options) {
-      option.nameController.dispose();
-      option.priceController.dispose();
+  void _removeOptionGroup(int index) {
+    final group = _optionGroups.removeAt(index);
+    group.dispose();
+    setState(() {});
+  }
+
+  void _addOption(int groupIndex) {
+    setState(() {
+      _optionGroups[groupIndex].options.add(OptionData.empty());
+    });
+  }
+
+  void _removeOption(int groupIndex, int optionIndex) {
+    final option = _optionGroups[groupIndex].options.removeAt(optionIndex);
+    option.dispose();
+    setState(() {});
+  }
+
+  Future<void> _chooseExistingItemForOption({
+    required int groupIndex,
+    required int optionIndex,
+  }) async {
+    if (_existingItems.isEmpty) {
+      _showSnack('Keine vorhandenen Artikel gefunden.');
+      return;
     }
 
-    setState(() {
-      _selectionGroups.removeAt(index);
-    });
-  }
-
-  void _addOptionToGroup(int groupIndex) {
-    setState(() {
-      _selectionGroups[groupIndex].options.add(
-        _SelectionOption(
-          nameController: TextEditingController(
-            text: 'Neue Option ${_selectionGroups[groupIndex].options.length + 1}',
-          ),
-          priceController: TextEditingController(text: '0'),
-        ),
-      );
-    });
-  }
-
-  void _removeOptionFromGroup(int groupIndex, int optionIndex) {
-    final option = _selectionGroups[groupIndex].options[optionIndex];
-    option.nameController.dispose();
-    option.priceController.dispose();
-
-    setState(() {
-      _selectionGroups[groupIndex].options.removeAt(optionIndex);
-    });
-  }
-
-  void _updateLinkedArticleCount(int count) {
-    setState(() {
-      _linkedArticleCount = count;
-      if (_linkedArticleSelections.length < count) {
-        _linkedArticleSelections.addAll(
-          List.generate(count - _linkedArticleSelections.length, (_) => null),
-        );
-      } else if (_linkedArticleSelections.length > count) {
-        _linkedArticleSelections = _linkedArticleSelections.sublist(0, count);
-      }
-    });
-  }
-
-  void _saveArticle() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Artikel gespeichert.'),
+    final chosen = await showModalBottomSheet<ItemOptionSource>(
+      context: context,
+      backgroundColor: _card,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
-    );
-  }
+      builder: (_) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(18, 18, 18, 26),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 44,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: _line,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'Artikel als Option wählen',
+                  style: TextStyle(
+                    color: _ink,
+                    fontSize: 21,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _existingItems.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final item = _existingItems[index];
 
-  Widget _sectionTitle(String title, {String? subtitle}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          title,
-          style: const TextStyle(
-            color: Color(0xFF1A1A1A),
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        if (subtitle != null) ...[
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: const TextStyle(
-              color: Color(0xFF777777),
-              fontSize: 14,
-              height: 1.5,
+                      return ListTile(
+                        tileColor: _soft,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        title: Text(
+                          item.name,
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                        subtitle: Text('${item.articleNumber} · ${item.price} €'),
+                        onTap: () => Navigator.pop(context, item),
+                      );
+                    },
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
-      ],
+        );
+      },
     );
+
+    if (chosen == null) return;
+
+    final option = _optionGroups[groupIndex].options[optionIndex];
+
+    setState(() {
+      option.nameController.text = chosen.name;
+      option.priceController.text = '0';
+      option.linkedItemId = chosen.id;
+      option.linkedItemName = chosen.name;
+    });
+  }
+
+  Future<void> _saveArticle() async {
+    final merchantId = _merchantId;
+
+    if (merchantId == null) {
+      _showSnack('Kein Händler gefunden.');
+      return;
+    }
+
+    final title = _titleController.text.trim();
+    final articleNumber = _articleNumberController.text.trim();
+
+    if (title.isEmpty) {
+      _showSnack('Bitte Titel eingeben.');
+      return;
+    }
+
+    if (articleNumber.isEmpty) {
+      _showSnack('Bitte Artikelnummer eingeben.');
+      return;
+    }
+
+    if (_selectedCategoryId == null || _selectedCategoryName == null) {
+      _showSnack('Bitte Kategorie wählen.');
+      return;
+    }
+
+    setState(() => _isSaving = true);
+
+    try {
+      String finalImageUrl = _imageUrl;
+
+      if (_pickedImage != null) {
+        finalImageUrl = await CloudinaryService.uploadImage(_pickedImage!);
+      }
+
+      final itemId =
+      _isNew ? DateTime.now().millisecondsSinceEpoch.toString() : widget.articleId;
+
+      final price = _parsePrice(_priceController.text);
+
+      final originalPrice = _originalPriceController.text.trim().isEmpty
+          ? null
+          : _parsePrice(_originalPriceController.text);
+
+      final data = <String, dynamic>{
+        'id': itemId,
+        'merchantId': merchantId,
+        'articleNumber': articleNumber,
+        'name': title,
+        'title': title,
+        'description': _descriptionController.text.trim(),
+        'categoryId': _selectedCategoryId,
+        'categoryName': _selectedCategoryName,
+        'price': price,
+        'originalPrice': originalPrice,
+        'imageUrl': finalImageUrl,
+        'tags': _selectedTags.toList(),
+        'searchName': _normalizeSearch(title),
+        'optionGroups': _optionGroups.map((group) => group.toMap()).toList(),
+        'isActive': true,
+        'isAvailable': true,
+        'type': 'merchant_item',
+        'sortOrder': _existingSortOrder ?? DateTime.now().millisecondsSinceEpoch,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (_isNew) {
+        data['createdAt'] = FieldValue.serverTimestamp();
+      }
+
+      await _itemsRef.doc(itemId).set(data, SetOptions(merge: true));
+
+      if (!mounted) return;
+
+      _showSnack('Artikel gespeichert.');
+      Navigator.pop(context);
+    } catch (e) {
+      _showSnack('Speichern fehlgeschlagen: $e');
+    } finally {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: _bg,
+        body: Center(
+          child: CircularProgressIndicator(color: _ink),
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8F6F1),
+      backgroundColor: _bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFFF8F6F1),
+        backgroundColor: _bg,
         elevation: 0,
         scrolledUnderElevation: 0,
-        title: const Text(
-          'Artikel bearbeiten',
-          style: TextStyle(
-            color: Color(0xFF1A1A1A),
+        title: Text(
+          _isNew ? 'Artikel erstellen' : 'Artikel bearbeiten',
+          style: const TextStyle(
+            color: _ink,
             fontSize: 22,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w900,
           ),
         ),
-        iconTheme: const IconThemeData(color: Color(0xFF1A1A1A)),
+        iconTheme: const IconThemeData(color: _ink),
       ),
       body: SafeArea(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 32),
+          padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Bearbeite hier Bild, Titel, Preis, Tags, Beschreibung und alle Auswahlmöglichkeiten.',
-                style: TextStyle(
-                  color: Color(0xFF777777),
-                  fontSize: 15,
-                  height: 1.6,
-                ),
-              ),
-              const SizedBox(height: 24),
-
-              _CardBox(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle('Bild'),
-                    const SizedBox(height: 14),
-                    GestureDetector(
-                      onTap: _pickImage,
-                      child: Container(
-                        width: double.infinity,
-                        height: 200,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEEEBE4),
-                          borderRadius: BorderRadius.circular(22),
-                          border: Border.all(
-                            color: const Color(0xFFE0DBD2),
-                            width: 1,
-                          ),
-                        ),
-                        child: _selectedImage != null
-                            ? ClipRRect(
-                          borderRadius: BorderRadius.circular(22),
-                          child: Image.file(
-                            _selectedImage!,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                          ),
-                        )
-                            : const Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.image_outlined,
-                              size: 42,
-                              color: Color(0xFF777777),
-                            ),
-                            SizedBox(height: 10),
-                            Text(
-                              'Bild auswählen',
-                              style: TextStyle(
-                                color: Color(0xFF777777),
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 50,
-                      child: OutlinedButton.icon(
-                        onPressed: _pickImage,
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF1A1A1A),
-                          side: const BorderSide(color: Color(0xFFDDDDDD)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        icon: const Icon(Icons.upload_rounded),
-                        label: const Text('Bild hochladen'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _CardBox(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle('Grunddaten'),
-                    const SizedBox(height: 16),
-                    _InputLabel('Titel'),
-                    const SizedBox(height: 8),
-                    _StyledInput(controller: _titleController, hintText: 'Titel'),
-                    const SizedBox(height: 14),
-                    _InputLabel('Preis'),
-                    const SizedBox(height: 8),
-                    _StyledInput(
-                      controller: _priceController,
-                      hintText: 'z. B. 5.00',
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 14),
-                    _InputLabel('Artikelnummer'),
-                    const SizedBox(height: 8),
-                    _StyledInput(
-                      controller: _articleNumberController,
-                      hintText: 'Artikelnummer',
-                    ),
-                    const SizedBox(height: 14),
-                    _InputLabel('Kategorie'),
-                    const SizedBox(height: 8),
-                    _DropdownBox<String>(
-                      value: _selectedCategory,
-                      items: _categories,
-                      onChanged: (value) {
-                        if (value == null) return;
-                        setState(() {
-                          _selectedCategory = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 14),
-                    _InputLabel('Beschreibung'),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _descriptionController,
-                      minLines: 4,
-                      maxLines: 6,
-                      decoration: _inputDecoration('Beschreibung eingeben'),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _CardBox(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(
-                      'Tags',
-                      subtitle: 'Mehrere Tags gleichzeitig möglich.',
-                    ),
-                    const SizedBox(height: 14),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: _availableTags.map((tag) {
-                        final selected = _selectedTags.contains(tag);
-                        return GestureDetector(
-                          onTap: () => _toggleTag(tag),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? const Color(0xFF1A1A1A)
-                                  : const Color(0xFFEEEBE4),
-                              borderRadius: BorderRadius.circular(22),
-                            ),
-                            child: Text(
-                              tag,
-                              style: TextStyle(
-                                color: selected
-                                    ? Colors.white
-                                    : const Color(0xFF555555),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _CardBox(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(
-                      'Auswahlgruppen',
-                      subtitle:
-                      'Zum Beispiel Soße, Brot, Side oder Getränk. Pro Gruppe genau eine Auswahl.',
-                    ),
-                    const SizedBox(height: 16),
-                    ...List.generate(_selectionGroups.length, (groupIndex) {
-                      final group = _selectionGroups[groupIndex];
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 18),
-                        child: Container(
-                          padding: const EdgeInsets.all(16),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF8F6F1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                              color: const Color(0xFFE7E2D9),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const Expanded(
-                                    child: Text(
-                                      'Gruppe aktiv',
-                                      style: TextStyle(
-                                        color: Color(0xFF1A1A1A),
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
-                                  Switch(
-                                    value: group.isEnabled,
-                                    onChanged: (value) {
-                                      setState(() {
-                                        group.isEnabled = value;
-                                      });
-                                    },
-                                    activeColor: const Color(0xFF1A1A1A),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 8),
-                              _InputLabel('Gruppenname'),
-                              const SizedBox(height: 8),
-                              _StyledInput(
-                                controller: group.titleController,
-                                hintText: 'z. B. Soße',
-                              ),
-                              const SizedBox(height: 14),
-
-                              if (group.isEnabled) ...[
-                                const Text(
-                                  'Optionen',
-                                  style: TextStyle(
-                                    color: Color(0xFF1A1A1A),
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-
-                                ...List.generate(group.options.length, (optionIndex) {
-                                  final option = group.options[optionIndex];
-                                  return Padding(
-                                    padding: const EdgeInsets.only(bottom: 12),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          flex: 3,
-                                          child: TextField(
-                                            controller: option.nameController,
-                                            decoration: _inputDecoration('Option'),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          flex: 2,
-                                          child: TextField(
-                                            controller: option.priceController,
-                                            keyboardType: TextInputType.number,
-                                            decoration: _inputDecoration('Aufpreis'),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        GestureDetector(
-                                          onTap: () =>
-                                              _removeOptionFromGroup(groupIndex, optionIndex),
-                                          child: Container(
-                                            width: 46,
-                                            height: 46,
-                                            decoration: BoxDecoration(
-                                              color: const Color(0xFFD83A34),
-                                              borderRadius: BorderRadius.circular(14),
-                                            ),
-                                            child: const Icon(
-                                              Icons.delete_outline_rounded,
-                                              color: Colors.white,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  );
-                                }),
-
-                                SizedBox(
-                                  width: double.infinity,
-                                  height: 48,
-                                  child: OutlinedButton.icon(
-                                    onPressed: () => _addOptionToGroup(groupIndex),
-                                    style: OutlinedButton.styleFrom(
-                                      foregroundColor: const Color(0xFF1A1A1A),
-                                      side: const BorderSide(
-                                        color: Color(0xFFDDDDDD),
-                                      ),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                    ),
-                                    icon: const Icon(Icons.add_rounded),
-                                    label: const Text('Option hinzufügen'),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                              ],
-
-                              SizedBox(
-                                width: double.infinity,
-                                height: 48,
-                                child: ElevatedButton(
-                                  onPressed: () => _removeSelectionGroup(groupIndex),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFD83A34),
-                                    foregroundColor: Colors.white,
-                                    elevation: 0,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
-                                    ),
-                                  ),
-                                  child: const Text('Gruppe löschen'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    }),
-
-                    SizedBox(
-                      width: double.infinity,
-                      height: 52,
-                      child: ElevatedButton.icon(
-                        onPressed: _addSelectionGroup,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF2F5E1C),
-                          foregroundColor: Colors.white,
-                          elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(16),
-                          ),
-                        ),
-                        icon: const Icon(Icons.add_rounded),
-                        label: const Text('Neue Auswahlgruppe hinzufügen'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 20),
-
-              _CardBox(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _sectionTitle(
-                      'Verknüpfte Artikel',
-                      subtitle:
-                      'Zum Beispiel für Menü-Kombis wie Wrap + Side + Getränk.',
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        const Expanded(
-                          child: Text(
-                            'Verknüpfte Artikel aktivieren?',
-                            style: TextStyle(
-                              color: Color(0xFF1A1A1A),
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                        Switch(
-                          value: _hasLinkedArticles,
-                          onChanged: (value) {
-                            setState(() {
-                              _hasLinkedArticles = value;
-                            });
-                          },
-                          activeColor: const Color(0xFF1A1A1A),
-                        ),
-                      ],
-                    ),
-                    if (_hasLinkedArticles) ...[
-                      const SizedBox(height: 10),
-                      _InputLabel('Wie viele Artikel verknüpfen?'),
-                      const SizedBox(height: 8),
-                      _DropdownBox<int>(
-                        value: _linkedArticleCount,
-                        items: [1, 2, 3, 4, 5],
-                        onChanged: (value) {
-                          if (value == null) return;
-                          _updateLinkedArticleCount(value);
-                        },
-                      ),
-                      const SizedBox(height: 14),
-                      ...List.generate(_linkedArticleCount, (index) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Verknüpfter Artikel ${index + 1}',
-                                style: const TextStyle(
-                                  color: Color(0xFF1A1A1A),
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              _DropdownBox<String>(
-                                value: _linkedArticleSelections[index],
-                                items: _allArticles,
-                                onChanged: (value) {
-                                  setState(() {
-                                    _linkedArticleSelections[index] = value;
-                                  });
-                                },
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
-                    ],
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 24),
-
+              _topBox(),
+              const SizedBox(height: 16),
+              _imageBox(),
+              const SizedBox(height: 16),
+              _basicBox(),
+              const SizedBox(height: 16),
+              _tagsBox(),
+              const SizedBox(height: 16),
+              _optionsBox(),
+              const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,
-                height: 54,
+                height: 56,
                 child: ElevatedButton(
-                  onPressed: _saveArticle,
+                  onPressed: _isSaving ? null : _saveArticle,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF1A1A1A),
+                    backgroundColor: _ink,
+                    disabledBackgroundColor: Colors.grey,
                     foregroundColor: Colors.white,
                     elevation: 0,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  child: const Text(
+                  child: _isSaving
+                      ? const SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2.4,
+                    ),
+                  )
+                      : const Text(
                     'Artikel speichern',
                     style: TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
@@ -756,6 +591,705 @@ class _EditArticlePageState extends State<EditArticlePage> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _topBox() {
+    return _CardBox(
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: _soft,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Icon(
+              _isNew ? Icons.add_rounded : Icons.edit_rounded,
+              color: _ink,
+            ),
+          ),
+          const SizedBox(width: 13),
+          Expanded(
+            child: Text(
+              _isNew ? 'Neuer Artikel' : 'Artikel bearbeiten',
+              style: const TextStyle(
+                color: _ink,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _imageBox() {
+    return _CardBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle(
+            title: 'Bild',
+            subtitle: 'Optional, aber stark für Kunden.',
+          ),
+          const SizedBox(height: 14),
+          GestureDetector(
+            onTap: _pickImage,
+            child: Container(
+              width: double.infinity,
+              height: 180,
+              decoration: BoxDecoration(
+                color: _soft,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: _line),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _pickedImageBytes != null
+                  ? Image.memory(_pickedImageBytes!, fit: BoxFit.cover)
+                  : _imageUrl.isNotEmpty
+                  ? Image.network(
+                _imageUrl,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => _imagePlaceholder(),
+              )
+                  : _imagePlaceholder(),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: OutlinedButton.icon(
+              onPressed: _pickImage,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _ink,
+                side: const BorderSide(color: _line),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.upload_rounded),
+              label: const Text(
+                'Bild auswählen',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _imagePlaceholder() {
+    return const Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.image_outlined, color: _muted, size: 42),
+        SizedBox(height: 10),
+        Text(
+          'Bild auswählen',
+          style: TextStyle(
+            color: _muted,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _basicBox() {
+    return _CardBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle(title: 'Grunddaten'),
+          const SizedBox(height: 16),
+          const _InputLabel('Titel'),
+          const SizedBox(height: 8),
+          _StyledInput(
+            controller: _titleController,
+            hintText: 'z. B. Falafel Wrap',
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  children: [
+                    const _InputLabel('Preis'),
+                    const SizedBox(height: 8),
+                    _StyledInput(
+                      controller: _priceController,
+                      hintText: '5',
+                      keyboardType: TextInputType.number,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  children: [
+                    const _InputLabel('Alter Preis'),
+                    const SizedBox(height: 8),
+                    _StyledInput(
+                      controller: _originalPriceController,
+                      hintText: 'optional',
+                      keyboardType: TextInputType.number,
+                      highlight: true,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          const _InputLabel('Artikelnummer'),
+          const SizedBox(height: 8),
+          _StyledInput(
+            controller: _articleNumberController,
+            hintText: 'z. B. 12',
+            keyboardType: TextInputType.number,
+          ),
+          const SizedBox(height: 14),
+          const _InputLabel('Kategorie'),
+          const SizedBox(height: 8),
+          _CategoryDropdown(
+            categories: _categories,
+            value: _selectedCategoryId,
+            onChanged: (category) {
+              if (category == null) return;
+
+              setState(() {
+                _selectedCategoryId = category.id;
+                _selectedCategoryName = category.name;
+              });
+            },
+          ),
+          const SizedBox(height: 14),
+          const _InputLabel('Beschreibung'),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _descriptionController,
+            minLines: 3,
+            maxLines: 5,
+            decoration: _inputDecoration('Beschreibung eingeben'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _tagsBox() {
+    return _CardBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle(
+            title: 'Tags',
+            subtitle: 'Zum Beispiel Halal, Vegan oder Bestseller.',
+          ),
+          const SizedBox(height: 14),
+          if (_foodTags.isEmpty)
+            const Text(
+              'Keine Tags gefunden.',
+              style: TextStyle(color: _muted),
+            )
+          else
+            Wrap(
+              spacing: 9,
+              runSpacing: 9,
+              children: _foodTags.map((tag) {
+                final selected = _selectedTags.contains(tag);
+
+                return GestureDetector(
+                  onTap: () => _toggleTag(tag),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 13,
+                      vertical: 9,
+                    ),
+                    decoration: BoxDecoration(
+                      color: selected ? _ink : _soft,
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Text(
+                      tag,
+                      style: TextStyle(
+                        color: selected ? Colors.white : _ink,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                );
+              }).toList(),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _optionsBox() {
+    return _CardBox(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _SectionTitle(
+            title: 'Optionen',
+            subtitle:
+            'Für Soße, Side, Getränk oder Extras. Maximal 1 Auswahl pro Gruppe.',
+          ),
+          const SizedBox(height: 14),
+          if (_optionGroups.isEmpty)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _soft,
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Text(
+                'Keine Optionen. Der Artikel kann direkt bestellt werden.',
+                style: TextStyle(
+                  color: _muted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          const SizedBox(height: 12),
+          ...List.generate(_optionGroups.length, (groupIndex) {
+            final group = _optionGroups[groupIndex];
+
+            return _OptionGroupBox(
+              group: group,
+              onChanged: () => setState(() {}),
+              onRemoveGroup: () => _removeOptionGroup(groupIndex),
+              onAddOption: () => _addOption(groupIndex),
+              onRemoveOption: (optionIndex) {
+                _removeOption(groupIndex, optionIndex);
+              },
+              onChooseArticle: (optionIndex) {
+                _chooseExistingItemForOption(
+                  groupIndex: groupIndex,
+                  optionIndex: optionIndex,
+                );
+              },
+            );
+          }),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: _addOptionGroup,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _green,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15),
+                ),
+              ),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text(
+                'Optionsgruppe hinzufügen',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/* DATA */
+
+class CategoryData {
+  final String id;
+  final String name;
+  final bool isActive;
+
+  const CategoryData({
+    required this.id,
+    required this.name,
+    required this.isActive,
+  });
+
+  factory CategoryData.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+
+    return CategoryData(
+      id: data['id']?.toString() ?? doc.id,
+      name: data['name']?.toString() ?? 'Ohne Name',
+      isActive: data['isActive'] as bool? ?? true,
+    );
+  }
+}
+
+class ItemOptionSource {
+  final String id;
+  final String name;
+  final String articleNumber;
+  final num price;
+  final bool isActive;
+
+  const ItemOptionSource({
+    required this.id,
+    required this.name,
+    required this.articleNumber,
+    required this.price,
+    required this.isActive,
+  });
+
+  factory ItemOptionSource.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+
+    return ItemOptionSource(
+      id: data['id']?.toString() ?? doc.id,
+      name: data['name']?.toString() ??
+          data['title']?.toString() ??
+          'Ohne Name',
+      articleNumber: data['articleNumber']?.toString() ?? '',
+      price: data['price'] is num ? data['price'] as num : 0,
+      isActive: data['isActive'] as bool? ?? true,
+    );
+  }
+}
+
+class OptionGroupData {
+  final TextEditingController titleController;
+  bool isRequired;
+  final List<OptionData> options;
+
+  OptionGroupData({
+    required this.titleController,
+    required this.isRequired,
+    required this.options,
+  });
+
+  factory OptionGroupData.empty() {
+    return OptionGroupData(
+      titleController: TextEditingController(text: 'Soße wählen'),
+      isRequired: false,
+      options: [OptionData.empty()],
+    );
+  }
+
+  factory OptionGroupData.fromMap(Map<String, dynamic> map) {
+    final rawOptions = map['options'];
+    final parsedOptions = <OptionData>[];
+
+    if (rawOptions is List) {
+      for (final raw in rawOptions) {
+        if (raw is Map) {
+          parsedOptions.add(
+            OptionData.fromMap(Map<String, dynamic>.from(raw)),
+          );
+        }
+      }
+    }
+
+    return OptionGroupData(
+      titleController: TextEditingController(
+        text: map['title']?.toString() ?? 'Option wählen',
+      ),
+      isRequired:
+      map['isRequired'] as bool? ?? map['required'] as bool? ?? false,
+      options: parsedOptions.isEmpty ? [OptionData.empty()] : parsedOptions,
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    final title = titleController.text.trim();
+
+    return {
+      'id': title
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+          .replaceAll(RegExp(r'^-|-$'), ''),
+      'title': title,
+      'isRequired': isRequired,
+      'minSelect': isRequired ? 1 : 0,
+      'maxSelect': 1,
+      'options': options.map((option) => option.toMap()).toList(),
+    };
+  }
+
+  void dispose() {
+    titleController.dispose();
+
+    for (final option in options) {
+      option.dispose();
+    }
+  }
+}
+
+class OptionData {
+  final TextEditingController nameController;
+  final TextEditingController priceController;
+
+  String? linkedItemId;
+  String? linkedItemName;
+
+  OptionData({
+    required this.nameController,
+    required this.priceController,
+    this.linkedItemId,
+    this.linkedItemName,
+  });
+
+  factory OptionData.empty() {
+    return OptionData(
+      nameController: TextEditingController(text: ''),
+      priceController: TextEditingController(text: '0'),
+    );
+  }
+
+  factory OptionData.fromMap(Map<String, dynamic> map) {
+    return OptionData(
+      nameController: TextEditingController(
+        text: map['name']?.toString() ?? '',
+      ),
+      priceController: TextEditingController(
+        text: map['price']?.toString() ?? '0',
+      ),
+      linkedItemId: map['linkedItemId']?.toString(),
+      linkedItemName: map['linkedItemName']?.toString(),
+    );
+  }
+
+  Map<String, dynamic> toMap() {
+    final name = nameController.text.trim();
+    final price =
+        num.tryParse(priceController.text.replaceAll(',', '.').trim()) ?? 0;
+
+    return {
+      'id': name
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
+          .replaceAll(RegExp(r'^-|-$'), ''),
+      'name': name,
+      'price': price,
+      'linkedItemId': linkedItemId,
+      'linkedItemName': linkedItemName,
+      'isAvailable': true,
+    };
+  }
+
+  void dispose() {
+    nameController.dispose();
+    priceController.dispose();
+  }
+}
+
+/* UI */
+
+class _OptionGroupBox extends StatelessWidget {
+  final OptionGroupData group;
+  final VoidCallback onChanged;
+  final VoidCallback onRemoveGroup;
+  final VoidCallback onAddOption;
+  final ValueChanged<int> onRemoveOption;
+  final ValueChanged<int> onChooseArticle;
+
+  const _OptionGroupBox({
+    required this.group,
+    required this.onChanged,
+    required this.onRemoveGroup,
+    required this.onAddOption,
+    required this.onRemoveOption,
+    required this.onChooseArticle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F6F1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE7E2D9)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _InputLabel('Name der Gruppe'),
+          const SizedBox(height: 8),
+          _StyledInput(
+            controller: group.titleController,
+            hintText: 'z. B. Soße wählen',
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Checkbox(
+                value: group.isRequired,
+                onChanged: (value) {
+                  group.isRequired = value ?? false;
+                  onChanged();
+                },
+              ),
+              const Expanded(
+                child: Text(
+                  'Pflichtauswahl',
+                  style: TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const Text(
+                'Max 1',
+                style: TextStyle(
+                  color: Color(0xFF777777),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ...List.generate(group.options.length, (index) {
+            final option = group.options[index];
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFEFB),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFFE7E2D9)),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: _StyledInput(
+                          controller: option.nameController,
+                          hintText: 'Option',
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: _StyledInput(
+                          controller: option.priceController,
+                          hintText: '+ €',
+                          keyboardType: TextInputType.number,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => onRemoveOption(index),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: Color(0xFFD83A34),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: () => onChooseArticle(index),
+                          icon: const Icon(Icons.link_rounded, size: 18),
+                          label: Text(
+                            option.linkedItemId == null
+                                ? 'Aus Artikel wählen'
+                                : 'Verknüpft: ${option.linkedItemName}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                      if (option.linkedItemId != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          onPressed: () {
+                            option.linkedItemId = null;
+                            option.linkedItemName = null;
+                            onChanged();
+                          },
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: onAddOption,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Option hinzufügen'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: ElevatedButton(
+              onPressed: onRemoveGroup,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFD83A34),
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Gruppe entfernen'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CategoryDropdown extends StatelessWidget {
+  final List<CategoryData> categories;
+  final String? value;
+  final ValueChanged<CategoryData?> onChanged;
+
+  const _CategoryDropdown({
+    required this.categories,
+    required this.value,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final safeValue =
+    categories.any((category) => category.id == value) ? value : categories.first.id;
+
+    return DropdownButtonFormField<String>(
+      value: safeValue,
+      isExpanded: true,
+      decoration: _inputDecoration('Kategorie'),
+      items: categories.map((category) {
+        return DropdownMenuItem<String>(
+          value: category.id,
+          child: Text(
+            category.name,
+            overflow: TextOverflow.ellipsis,
+          ),
+        );
+      }).toList(),
+      onChanged: (id) {
+        if (id == null) return;
+
+        final category = categories.firstWhere(
+              (cat) => cat.id == id,
+          orElse: () => categories.first,
+        );
+
+        onChanged(category);
+      },
     );
   }
 }
@@ -769,23 +1303,59 @@ class _CardBox extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: const Color(0xFFFDFCF9),
+        color: const Color(0xFFFFFEFB),
         borderRadius: BorderRadius.circular(26),
-        border: Border.all(
-          color: const Color(0xFFE7E2D9),
-          width: 1,
-        ),
+        border: Border.all(color: const Color(0xFFE7E2D9)),
         boxShadow: const [
           BoxShadow(
             color: Color(0x08000000),
-            blurRadius: 18,
-            offset: Offset(0, 8),
+            blurRadius: 16,
+            offset: Offset(0, 7),
           ),
         ],
       ),
       child: child,
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String title;
+  final String? subtitle;
+
+  const _SectionTitle({
+    required this.title,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            color: Color(0xFF1A1A1A),
+            fontSize: 18,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        if (subtitle != null) ...[
+          const SizedBox(height: 5),
+          Text(
+            subtitle!,
+            style: const TextStyle(
+              color: Color(0xFF777777),
+              fontSize: 13.5,
+              height: 1.4,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }
@@ -797,12 +1367,15 @@ class _InputLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        color: Color(0xFF1A1A1A),
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Color(0xFF1A1A1A),
+          fontSize: 13.5,
+          fontWeight: FontWeight.w800,
+        ),
       ),
     );
   }
@@ -812,11 +1385,13 @@ class _StyledInput extends StatelessWidget {
   final TextEditingController controller;
   final String hintText;
   final TextInputType? keyboardType;
+  final bool highlight;
 
   const _StyledInput({
     required this.controller,
     required this.hintText,
     this.keyboardType,
+    this.highlight = false,
   });
 
   @override
@@ -824,112 +1399,45 @@ class _StyledInput extends StatelessWidget {
     return TextField(
       controller: controller,
       keyboardType: keyboardType,
-      decoration: _inputDecoration(hintText),
-    );
-  }
-}
-
-class _DropdownBox<T> extends StatelessWidget {
-  final T? value;
-  final List<T> items;
-  final void Function(T?) onChanged;
-
-  const _DropdownBox({
-    required this.value,
-    required this.items,
-    required this.onChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF3F0E9),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: const Color(0xFFE0DBD2),
-        ),
+      style: const TextStyle(
+        color: Color(0xFF1A1A1A),
+        fontWeight: FontWeight.w700,
       ),
-      child: DropdownButtonHideUnderline(
-        child: DropdownButton<T>(
-          value: value,
-          isExpanded: true,
-          dropdownColor: const Color(0xFFFDFCF9),
-          icon: const Icon(Icons.keyboard_arrow_down_rounded),
-          items: items.map((item) {
-            return DropdownMenuItem<T>(
-              value: item,
-              child: Text(
-                item.toString(),
-                style: const TextStyle(
-                  color: Color(0xFF1A1A1A),
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            );
-          }).toList(),
-          onChanged: onChanged,
-        ),
+      decoration: _inputDecoration(
+        hintText,
+        highlight: highlight,
       ),
     );
   }
 }
 
-InputDecoration _inputDecoration(String hintText) {
+InputDecoration _inputDecoration(
+    String hintText, {
+      bool highlight = false,
+    }) {
   return InputDecoration(
     hintText: hintText,
-    hintStyle: const TextStyle(
-      color: Color(0xFFAAAAAA),
-      fontSize: 15,
-    ),
     filled: true,
-    fillColor: const Color(0xFFF3F0E9),
-    contentPadding: const EdgeInsets.symmetric(
-      horizontal: 16,
-      vertical: 16,
-    ),
+    fillColor: highlight ? const Color(0xFFFFF4D8) : const Color(0xFFF3F0E9),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 15, vertical: 15),
     border: OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
-      borderSide: const BorderSide(
-        color: Color(0xFFE0DBD2),
+      borderSide: BorderSide(
+        color: highlight ? const Color(0xFFD8A75D) : const Color(0xFFE0DBD2),
       ),
     ),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
-      borderSide: const BorderSide(
-        color: Color(0xFFE0DBD2),
+      borderSide: BorderSide(
+        color: highlight ? const Color(0xFFD8A75D) : const Color(0xFFE0DBD2),
       ),
     ),
     focusedBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(16),
       borderSide: const BorderSide(
         color: Color(0xFF1A1A1A),
-        width: 1.2,
+        width: 1.3,
       ),
     ),
   );
-}
-
-class _SelectionGroup {
-  TextEditingController titleController;
-  bool isEnabled;
-  List<_SelectionOption> options;
-
-  _SelectionGroup({
-    required this.titleController,
-    required this.isEnabled,
-    required this.options,
-  });
-}
-
-class _SelectionOption {
-  TextEditingController nameController;
-  TextEditingController priceController;
-
-  _SelectionOption({
-    required this.nameController,
-    required this.priceController,
-  });
 }
