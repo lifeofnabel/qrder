@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'loginPage.dart';
-import 'howPage.dart';
+import '../guest/loginPage.dart';
+import '../guest/howPage.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'landingPage.dart';
+import '../guest/landingPage.dart';
+
 import 'loginPage.dart';
 
 class HowPage extends StatefulWidget {

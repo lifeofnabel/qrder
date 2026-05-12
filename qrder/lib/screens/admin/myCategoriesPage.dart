@@ -18,6 +18,7 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
   static const Color _line = Color(0xFFE7E2D9);
   static const Color _green = Color(0xFF2F5E1C);
   static const Color _red = Color(0xFFD83A34);
+  static const Color _gold = Color(0xFFD8A75D);
 
   bool _isSavingOrder = false;
 
@@ -31,6 +32,16 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
         .collection('merchants')
         .doc(merchantId)
         .collection('itemCategories');
+  }
+
+  CollectionReference<Map<String, dynamic>>? get _itemsRef {
+    final merchantId = _merchantId;
+    if (merchantId == null) return null;
+
+    return FirebaseFirestore.instance
+        .collection('merchants')
+        .doc(merchantId)
+        .collection('items');
   }
 
   String _normalize(String value) {
@@ -65,20 +76,29 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
       return;
     }
 
-    final result = await _openCategorySheet();
+    final result = await _openCategorySheet(
+      title: 'Neue Kategorie',
+      buttonText: 'Hinzufügen',
+    );
 
     if (result == null) return;
 
     final name = result.name.trim();
     final description = result.description.trim();
-    final normalizedName = _normalize(name);
 
-    if (normalizedName.isEmpty) {
-      _showSnack('Bitte gültigen Namen eingeben.');
+    if (name.isEmpty) {
+      _showSnack('Bitte Namen eingeben.');
       return;
     }
 
-    final docRef = ref.doc(normalizedName);
+    final id = _normalize(name);
+
+    if (id.isEmpty) {
+      _showSnack('Ungültiger Kategoriename.');
+      return;
+    }
+
+    final docRef = ref.doc(id);
     final doc = await docRef.get();
     final oldData = doc.data();
 
@@ -88,10 +108,10 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
     }
 
     await docRef.set({
-      'id': normalizedName,
+      'id': id,
       'merchantId': merchantId,
       'name': name,
-      'normalizedName': normalizedName,
+      'normalizedName': id,
       'description': description,
       'sortOrder': DateTime.now().millisecondsSinceEpoch,
       'isActive': true,
@@ -107,16 +127,15 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
     if (ref == null) return;
 
     final result = await _openCategorySheet(
-      name: category.name,
-      description: category.description,
       title: 'Kategorie bearbeiten',
       buttonText: 'Speichern',
+      name: category.name,
+      description: category.description,
     );
 
     if (result == null) return;
 
     final name = result.name.trim();
-    final description = result.description.trim();
 
     if (name.isEmpty) {
       _showSnack('Name darf nicht leer sein.');
@@ -126,14 +145,14 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
     await ref.doc(category.id).update({
       'name': name,
       'normalizedName': _normalize(name),
-      'description': description,
+      'description': result.description.trim(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
     _showSnack('Kategorie gespeichert.');
   }
 
-  Future<void> _deactivateCategory(CategoryData category) async {
+  Future<void> _hideCategory(CategoryData category, int itemCount) async {
     final ref = _categoriesRef;
     if (ref == null) return;
 
@@ -142,9 +161,11 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
       builder: (_) {
         return AlertDialog(
           backgroundColor: _card,
-          title: const Text('Kategorie deaktivieren?'),
+          title: const Text('Kategorie ausblenden?'),
           content: Text(
-            '"${category.name}" wird nicht gelöscht, sondern nur ausgeblendet.',
+            itemCount > 0
+                ? '"${category.name}" hat $itemCount Artikel. Die Kategorie wird nur ausgeblendet, nicht gelöscht.'
+                : '"${category.name}" wird ausgeblendet, nicht gelöscht.',
           ),
           actions: [
             TextButton(
@@ -157,7 +178,7 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
                 backgroundColor: _red,
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Deaktivieren'),
+              child: const Text('Ausblenden'),
             ),
           ],
         );
@@ -171,7 +192,7 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
       'updatedAt': FieldValue.serverTimestamp(),
     });
 
-    _showSnack('Kategorie deaktiviert.');
+    _showSnack('Kategorie ausgeblendet.');
   }
 
   Future<void> _moveCategory({
@@ -205,11 +226,18 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
     setState(() => _isSavingOrder = false);
   }
 
+  int _countItemsForCategory({
+    required String categoryId,
+    required List<ArticleData> articles,
+  }) {
+    return articles.where((item) => item.categoryId == categoryId).length;
+  }
+
   Future<_CategorySheetResult?> _openCategorySheet({
+    required String title,
+    required String buttonText,
     String name = '',
     String description = '',
-    String title = 'Neue Kategorie',
-    String buttonText = 'Hinzufügen',
   }) async {
     final nameController = TextEditingController(text: name);
     final descriptionController = TextEditingController(text: description);
@@ -294,7 +322,7 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
                     buttonText,
                     style: const TextStyle(
                       fontSize: 15,
-                      fontWeight: FontWeight.w800,
+                      fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
@@ -313,7 +341,8 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final ref = _categoriesRef;
+    final categoriesRef = _categoriesRef;
+    final itemsRef = _itemsRef;
 
     return Scaffold(
       backgroundColor: _bg,
@@ -339,95 +368,136 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
         ],
       ),
       body: SafeArea(
-        child: ref == null
+        child: categoriesRef == null || itemsRef == null
             ? const Center(child: Text('Kein Händler gefunden.'))
             : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: ref.orderBy('sortOrder').snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
+          stream: categoriesRef.orderBy('sortOrder').snapshots(),
+          builder: (context, categorySnapshot) {
+            if (categorySnapshot.hasError) {
               return const Center(
                 child: Text('Kategorien konnten nicht geladen werden.'),
               );
             }
 
-            if (!snapshot.hasData) {
+            if (!categorySnapshot.hasData) {
               return const Center(
                 child: CircularProgressIndicator(color: _ink),
               );
             }
 
-            final categories = snapshot.data!.docs
+            final categories = categorySnapshot.data!.docs
                 .map((doc) => CategoryData.fromDoc(doc))
-                .where((cat) => cat.isActive)
+                .where((category) => category.isActive)
                 .toList();
 
-            if (categories.isEmpty) {
-              return _EmptyCategories(onAdd: _addCategory);
-            }
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: itemsRef.snapshots(),
+              builder: (context, itemSnapshot) {
+                if (itemSnapshot.hasError) {
+                  return const Center(
+                    child: Text('Artikel konnten nicht geladen werden.'),
+                  );
+                }
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _TopInfo(
-                    count: categories.length,
-                    isSavingOrder: _isSavingOrder,
-                  ),
-                  const SizedBox(height: 16),
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: categories.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final category = categories[index];
+                if (!itemSnapshot.hasData) {
+                  return const Center(
+                    child: CircularProgressIndicator(color: _ink),
+                  );
+                }
 
-                      return _CategoryCard(
-                        category: category,
-                        isFirst: index == 0,
-                        isLast: index == categories.length - 1,
-                        onEdit: () => _editCategory(category),
-                        onDelete: () => _deactivateCategory(category),
-                        onMoveUp: () => _moveCategory(
-                          categories: categories,
-                          oldIndex: index,
-                          newIndex: index - 1,
-                        ),
-                        onMoveDown: () => _moveCategory(
-                          categories: categories,
-                          oldIndex: index,
-                          newIndex: index + 1,
-                        ),
-                      );
-                    },
+                final articles = itemSnapshot.data!.docs
+                    .map((doc) => ArticleData.fromDoc(doc))
+                    .where((item) => item.isActive)
+                    .toList();
+
+                final uncategorizedCount = articles
+                    .where(
+                      (item) => !categories.any(
+                        (cat) => cat.id == item.categoryId,
                   ),
-                  const SizedBox(height: 18),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: ElevatedButton.icon(
-                      onPressed: _addCategory,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
+                )
+                    .length;
+
+                if (categories.isEmpty) {
+                  return _EmptyCategories(onAdd: _addCategory);
+                }
+
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(22, 14, 22, 32),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _HeroCard(
+                        categoryCount: categories.length,
+                        articleCount: articles.length,
+                        uncategorizedCount: uncategorizedCount,
+                        isSavingOrder: _isSavingOrder,
+                      ),
+                      const SizedBox(height: 16),
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: categories.length,
+                        separatorBuilder: (_, __) =>
+                        const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final category = categories[index];
+
+                          final itemCount = _countItemsForCategory(
+                            categoryId: category.id,
+                            articles: articles,
+                          );
+
+                          return _CategoryCard(
+                            index: index,
+                            category: category,
+                            itemCount: itemCount,
+                            isFirst: index == 0,
+                            isLast: index == categories.length - 1,
+                            onEdit: () => _editCategory(category),
+                            onHide: () =>
+                                _hideCategory(category, itemCount),
+                            onMoveUp: () => _moveCategory(
+                              categories: categories,
+                              oldIndex: index,
+                              newIndex: index - 1,
+                            ),
+                            onMoveDown: () => _moveCategory(
+                              categories: categories,
+                              oldIndex: index,
+                              newIndex: index + 1,
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 18),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 54,
+                        child: ElevatedButton.icon(
+                          onPressed: _addCategory,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _green,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: const Icon(Icons.add_rounded),
+                          label: const Text(
+                            'Kategorie hinzufügen',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
                         ),
                       ),
-                      icon: const Icon(Icons.add_rounded),
-                      label: const Text(
-                        'Kategorie hinzufügen',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             );
           },
         ),
@@ -435,6 +505,8 @@ class _MyCategoriesPageState extends State<MyCategoriesPage> {
     );
   }
 }
+
+/* DATA */
 
 class CategoryData {
   final String id;
@@ -464,6 +536,28 @@ class CategoryData {
   }
 }
 
+class ArticleData {
+  final String id;
+  final String categoryId;
+  final bool isActive;
+
+  const ArticleData({
+    required this.id,
+    required this.categoryId,
+    required this.isActive,
+  });
+
+  factory ArticleData.fromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? {};
+
+    return ArticleData(
+      id: data['id']?.toString() ?? doc.id,
+      categoryId: data['categoryId']?.toString() ?? '',
+      isActive: data['isActive'] as bool? ?? true,
+    );
+  }
+}
+
 class _CategorySheetResult {
   final String name;
   final String description;
@@ -474,12 +568,18 @@ class _CategorySheetResult {
   });
 }
 
-class _TopInfo extends StatelessWidget {
-  final int count;
+/* UI */
+
+class _HeroCard extends StatelessWidget {
+  final int categoryCount;
+  final int articleCount;
+  final int uncategorizedCount;
   final bool isSavingOrder;
 
-  const _TopInfo({
-    required this.count,
+  const _HeroCard({
+    required this.categoryCount,
+    required this.articleCount,
+    required this.uncategorizedCount,
     required this.isSavingOrder,
   });
 
@@ -487,52 +587,60 @@ class _TopInfo extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFFFFFEFB),
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(color: const Color(0xFFE7E2D9)),
+        color: const Color(0xFF1A1A1A),
+        borderRadius: BorderRadius.circular(28),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x18000000),
+            blurRadius: 22,
+            offset: Offset(0, 10),
+          ),
+        ],
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 46,
-            height: 46,
-            decoration: BoxDecoration(
-              color: const Color(0xFFEEEBE4),
-              borderRadius: BorderRadius.circular(15),
-            ),
-            child: const Icon(
-              Icons.category_outlined,
-              color: Color(0xFF1A1A1A),
+          const Icon(
+            Icons.category_rounded,
+            color: Colors.white,
+            size: 34,
+          ),
+          const SizedBox(height: 18),
+          Text(
+            '$categoryCount Kategorien',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+              letterSpacing: -0.7,
             ),
           ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '$count Kategorien',
-                  style: const TextStyle(
-                    color: Color(0xFF1A1A1A),
-                    fontSize: 19,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isSavingOrder
-                      ? 'Reihenfolge wird gespeichert...'
-                      : 'Sortieren, bearbeiten, deaktivieren.',
-                  style: const TextStyle(
-                    color: Color(0xFF777777),
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+          const SizedBox(height: 7),
+          Text(
+            isSavingOrder
+                ? 'Reihenfolge wird gespeichert...'
+                : 'Sortiere dein Menü so, wie Kunden es sehen sollen.',
+            style: const TextStyle(
+              color: Color(0xFFD8D8D8),
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              height: 1.35,
             ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _HeroChip(text: '$articleCount Artikel'),
+              if (uncategorizedCount > 0)
+                _HeroChip(
+                  text: '$uncategorizedCount ohne Kategorie',
+                  red: true,
+                ),
+            ],
           ),
         ],
       ),
@@ -540,21 +648,57 @@ class _TopInfo extends StatelessWidget {
   }
 }
 
+class _HeroChip extends StatelessWidget {
+  final String text;
+  final bool red;
+
+  const _HeroChip({
+    required this.text,
+    this.red = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 10,
+        vertical: 7,
+      ),
+      decoration: BoxDecoration(
+        color: red ? const Color(0xFFD83A34) : Colors.white.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
 class _CategoryCard extends StatelessWidget {
+  final int index;
   final CategoryData category;
+  final int itemCount;
   final bool isFirst;
   final bool isLast;
   final VoidCallback onEdit;
-  final VoidCallback onDelete;
+  final VoidCallback onHide;
   final VoidCallback onMoveUp;
   final VoidCallback onMoveDown;
 
   const _CategoryCard({
+    required this.index,
     required this.category,
+    required this.itemCount,
     required this.isFirst,
     required this.isLast,
     required this.onEdit,
-    required this.onDelete,
+    required this.onHide,
     required this.onMoveUp,
     required this.onMoveDown,
   });
@@ -563,32 +707,58 @@ class _CategoryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Material(
       color: const Color(0xFFFFFEFB),
-      borderRadius: BorderRadius.circular(22),
+      borderRadius: BorderRadius.circular(24),
       child: InkWell(
-        borderRadius: BorderRadius.circular(22),
+        borderRadius: BorderRadius.circular(24),
         onTap: onEdit,
         child: Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
+            borderRadius: BorderRadius.circular(24),
             border: Border.all(color: const Color(0xFFE7E2D9)),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x06000000),
+                blurRadius: 12,
+                offset: Offset(0, 5),
+              ),
+            ],
           ),
           child: Row(
             children: [
               Column(
                 children: [
-                  _MiniIconButton(
+                  _MoveButton(
                     icon: Icons.keyboard_arrow_up_rounded,
                     onTap: isFirst ? null : onMoveUp,
                   ),
                   const SizedBox(height: 6),
-                  _MiniIconButton(
+                  _MoveButton(
                     icon: Icons.keyboard_arrow_down_rounded,
                     onTap: isLast ? null : onMoveDown,
                   ),
                 ],
               ),
               const SizedBox(width: 12),
+              Container(
+                width: 54,
+                height: 54,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFEEEBE4),
+                  borderRadius: BorderRadius.circular(17),
+                ),
+                child: Center(
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(
+                      color: Color(0xFF1A1A1A),
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 13),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -599,41 +769,49 @@ class _CategoryCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF1A1A1A),
-                        fontSize: 16,
+                        fontSize: 17,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 5),
                     Text(
                       category.description.isEmpty
                           ? 'Keine Beschreibung'
                           : category.description,
-                      maxLines: 2,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: Color(0xFF777777),
-                        fontSize: 13,
-                        height: 1.3,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    _MiniChip(
+                      text: '$itemCount Artikel',
+                      gold: itemCount == 0,
                     ),
                   ],
                 ),
               ),
               const SizedBox(width: 8),
-              IconButton(
-                onPressed: onEdit,
-                icon: const Icon(
-                  Icons.edit_rounded,
-                  color: Color(0xFF777777),
-                ),
-              ),
-              IconButton(
-                onPressed: onDelete,
-                icon: const Icon(
-                  Icons.visibility_off_rounded,
-                  color: Color(0xFFD83A34),
-                ),
+              Column(
+                children: [
+                  IconButton(
+                    onPressed: onEdit,
+                    icon: const Icon(
+                      Icons.edit_rounded,
+                      color: Color(0xFF777777),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: onHide,
+                    icon: const Icon(
+                      Icons.visibility_off_rounded,
+                      color: Color(0xFFD83A34),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -643,11 +821,11 @@ class _CategoryCard extends StatelessWidget {
   }
 }
 
-class _MiniIconButton extends StatelessWidget {
+class _MoveButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback? onTap;
 
-  const _MiniIconButton({
+  const _MoveButton({
     required this.icon,
     required this.onTap,
   });
@@ -663,16 +841,46 @@ class _MiniIconButton extends StatelessWidget {
         width: 36,
         height: 36,
         decoration: BoxDecoration(
-          color: disabled
-              ? const Color(0xFFF1EFEA)
-              : const Color(0xFFEEEBE4),
+          color:
+          disabled ? const Color(0xFFF1EFEA) : const Color(0xFFEEEBE4),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Icon(
           icon,
-          color: disabled
-              ? const Color(0xFFB8B8B8)
-              : const Color(0xFF1A1A1A),
+          color:
+          disabled ? const Color(0xFFB8B8B8) : const Color(0xFF1A1A1A),
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniChip extends StatelessWidget {
+  final String text;
+  final bool gold;
+
+  const _MiniChip({
+    required this.text,
+    this.gold = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: gold ? const Color(0xFFFFF4D8) : const Color(0xFFEEEBE4),
+        borderRadius: BorderRadius.circular(99),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          color: gold ? const Color(0xFF8A5A00) : const Color(0xFF1A1A1A),
+          fontSize: 10.8,
+          fontWeight: FontWeight.w900,
         ),
       ),
     );
@@ -748,21 +956,21 @@ class _EmptyCategories extends StatelessWidget {
           children: [
             const Icon(
               Icons.category_outlined,
-              size: 46,
+              size: 48,
               color: Color(0xFF777777),
             ),
             const SizedBox(height: 14),
             const Text(
-              'Noch keine Kategorien',
+              'Keine Kategorien',
               style: TextStyle(
                 color: Color(0xFF1A1A1A),
-                fontSize: 21,
+                fontSize: 22,
                 fontWeight: FontWeight.w900,
               ),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Erstelle z. B. Wraps, Bowls oder Getränke.',
+              'Erstelle zuerst Kategorien wie Wraps, Bowls oder Getränke.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: Color(0xFF777777),

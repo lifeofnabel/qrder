@@ -2,9 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-import 'landingPage.dart';
+import '../guest/landingPage.dart';
 import 'howPage.dart';
-import 'restaurantHomePage.dart';
+import '../admin/dashboard.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});

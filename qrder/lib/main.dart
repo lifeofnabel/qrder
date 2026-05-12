@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
-import 'screens/admin/landingPage.dart';
+import 'screens/guest/landingPage.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
