@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../guest/loginPage.dart';
 import '../guest/howPage.dart';
+import '../guest/signupPage.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -10,7 +11,6 @@ class LandingPage extends StatefulWidget {
 }
 
 class _LandingPageState extends State<LandingPage> {
-  int _selectedIndex = 0;
 
   static const Color _bg = Color(0xFFF8F6F1);
   static const Color _card = Color(0xFFFFFEFB);
@@ -35,11 +35,9 @@ class _LandingPageState extends State<LandingPage> {
   }
 
   void _showPartnersSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Partner-Übersicht kommt als Nächstes.'),
-        duration: Duration(seconds: 2),
-      ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const SignupPage()),
     );
   }
 
@@ -129,15 +127,6 @@ class _LandingPageState extends State<LandingPage> {
     );
   }
 
-  void _onNavTap(int index) {
-    setState(() => _selectedIndex = index);
-
-    if (index == 0) return;
-    if (index == 1) _goToLoginPage();
-    if (index == 2) _goToHowPage();
-    if (index == 3) _showContactSoon();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -208,14 +197,13 @@ class _LandingPageState extends State<LandingPage> {
           child: Column(
             children: [
               _heroCard(),
-
               const SizedBox(height: 18),
 
               Row(
                 children: const [
                   Expanded(
                     child: _PopoutCard(
-                      icon: '⚡',
+                      icon: Icons.flash_on_rounded,
                       title: 'Schneller',
                       text: 'weniger Warten',
                     ),
@@ -223,7 +211,7 @@ class _LandingPageState extends State<LandingPage> {
                   SizedBox(width: 10),
                   Expanded(
                     child: _PopoutCard(
-                      icon: '🧾',
+                      icon: Icons.receipt_long_rounded,
                       title: 'Klarer',
                       text: 'weniger Fehler',
                     ),
@@ -237,7 +225,7 @@ class _LandingPageState extends State<LandingPage> {
                 children: const [
                   Expanded(
                     child: _PopoutCard(
-                      icon: '🌍',
+                      icon: Icons.language_rounded,
                       title: 'Mehrsprachig',
                       text: 'für jeden Gast',
                     ),
@@ -245,7 +233,7 @@ class _LandingPageState extends State<LandingPage> {
                   SizedBox(width: 10),
                   Expanded(
                     child: _PopoutCard(
-                      icon: '📱',
+                      icon: Icons.phone_android_rounded,
                       title: 'Ohne App',
                       text: 'direkt im Browser',
                     ),
@@ -253,54 +241,9 @@ class _LandingPageState extends State<LandingPage> {
                 ],
               ),
 
-              const SizedBox(height: 18),
 
-              _stepsPopout(),
-              
             ],
           ),
-        ),
-      ),
-      bottomNavigationBar: Container(
-        decoration: const BoxDecoration(
-          color: _bg,
-          border: Border(top: BorderSide(color: Color(0xFFEEEEEE))),
-        ),
-        child: BottomNavigationBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          type: BottomNavigationBarType.fixed,
-          currentIndex: _selectedIndex,
-          onTap: _onNavTap,
-          selectedItemColor: _ink,
-          unselectedItemColor: const Color(0xFFBBBBBB),
-          selectedLabelStyle: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-          ),
-          unselectedLabelStyle: const TextStyle(fontSize: 11),
-          items: const [
-            BottomNavigationBarItem(
-              icon: Icon(Icons.home_outlined),
-              activeIcon: Icon(Icons.home_rounded),
-              label: 'Home',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.login_outlined),
-              activeIcon: Icon(Icons.login_rounded),
-              label: 'Login',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.info_outline_rounded),
-              activeIcon: Icon(Icons.info_rounded),
-              label: 'So geht’s',
-            ),
-            BottomNavigationBarItem(
-              icon: Icon(Icons.mail_outline_rounded),
-              activeIcon: Icon(Icons.mail_rounded),
-              label: 'Kontakt',
-            ),
-          ],
         ),
       ),
     );
@@ -469,32 +412,6 @@ class _LandingPageState extends State<LandingPage> {
     );
   }
 
-  Widget _stepsPopout() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(17),
-      decoration: BoxDecoration(
-        color: _ink,
-        borderRadius: BorderRadius.circular(26),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x16000000),
-            blurRadius: 20,
-            offset: Offset(0, 9),
-          ),
-        ],
-      ),
-      child: Column(
-        children: const [
-          _MiniStep(number: '1', title: 'QR scannen'),
-          _MiniDivider(),
-          _MiniStep(number: '2', title: 'Gericht wählen'),
-          _MiniDivider(),
-          _MiniStep(number: '3', title: 'Code zeigen'),
-        ],
-      ),
-    );
-  }
 
   Widget _bottomCta() {
     return Container(
@@ -512,7 +429,7 @@ class _LandingPageState extends State<LandingPage> {
 }
 
 class _PopoutCard extends StatelessWidget {
-  final String icon;
+  final IconData icon;
   final String title;
   final String text;
 
@@ -531,23 +448,16 @@ class _PopoutCard extends StatelessWidget {
         color: const Color(0xFFFFFEFB),
         borderRadius: BorderRadius.circular(23),
         border: Border.all(color: const Color(0xFFE7E2D9)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0D000000),
-            blurRadius: 16,
-            offset: Offset(0, 7),
-          ),
-        ],
       ),
       child: Stack(
-        clipBehavior: Clip.none,
         children: [
           Positioned(
             right: -4,
             top: -4,
-            child: Text(
+            child: Icon(
               icon,
-              style: const TextStyle(fontSize: 24),
+              size: 26,
+              color: const Color(0xFFD8A75D),
             ),
           ),
           Column(
