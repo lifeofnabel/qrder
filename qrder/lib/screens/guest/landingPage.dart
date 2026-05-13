@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../guest/loginPage.dart';
 import '../guest/howPage.dart';
 import '../guest/signupPage.dart';
+import '../wizard/merchantOnBoardingWizardPage.dart';
 
 class LandingPage extends StatefulWidget {
   const LandingPage({super.key});
@@ -42,11 +43,46 @@ class _LandingPageState extends State<LandingPage> {
   }
 
   void _showContactSoon() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Kontaktseite kommt als Nächstes.'),
-        duration: Duration(seconds: 2),
-      ),
+    final passwordController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (_) {
+        return AlertDialog(
+          title: const Text('Mitarbeiter Zugang'),
+          content: TextField(
+            controller: passwordController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Passwort',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Abbrechen'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (passwordController.text.trim() == '0') {
+                  Navigator.pop(context);
+
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const MerchantOnboardingWizardPage(),                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Falsches Passwort')),
+                  );
+                }
+              },
+              child: const Text('Weiter'),
+            ),
+          ],
+        );
+      },
     );
   }
 

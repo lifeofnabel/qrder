@@ -5,7 +5,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import '../../../models/cloudinary_service.dart';
+import '../../../core/services/cloudinary_service.dart';
 import 'editArticleParts.dart';
 
 class EditArticlePage extends StatefulWidget {
